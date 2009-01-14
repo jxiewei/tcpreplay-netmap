@@ -1,0 +1,209 @@
+flag = {
+    name        = tcpedit;
+    documentation;
+    lib-name    = tcpedit;
+};
+
+flag = {
+    name        = portmap;
+    value       = r;
+    arg-type    = string;
+    max         = 1;
+    descrip     = "Rewrite TCP/UDP ports";
+    doc         = <<- EOText
+Specify a list of comma delimited port mappingings consisting of 
+colon delimited port number pairs.  Each colon delimited port pair
+consists of the port to match followed by the port number to rewrite.
+
+Example:
+@example
+--portmap=80:8000,8080:80
+@end example
+EOText;
+};
+
+flag = {
+    name        = seed;
+    value       = s;
+    arg-type    = number;
+    descrip     = "Randomize src/dst IP addresses w/ given seed";
+    max         = 1;
+    doc         = <<- EOText
+Causes the source and destination IP addresses to be pseudo 
+randomized but still maintain client/server relationships.
+Since the randomization is deterministic based on the seed, 
+you can reuse the same seed value to recreate the traffic.
+EOText; 
+};
+
+flag = {
+    name        = pnat;
+    value       = N;
+    arg-type    = string;
+    max         = 2;
+    stack-arg;
+    flags-cant  = srcipmap;
+    flass-cant  = dstipmap;
+    descrip     = "Rewrite IP addresses using pseudo-NAT";
+    doc         = <<- EOText
+Takes a comma delimited series of colon delimited CIDR
+netblock pairs.  Each netblock pair is evaluated in order against
+the IP addresses.  If the IP address in the packet matches the
+first netblock, it is rewriten using the second netblock as a
+mask against the high order bits.
+
+Example:
+@example
+--pnat=192.168.0.0/16:10.77.0.0/16,172.16.0.0/12:10.1.0.0/24
+@end example
+EOText; 
+};
+
+flag = {
+    name        = srcipmap;
+    value       = S;
+    arg-type    = string;
+    max         = 1;
+    flags-cant  = pnat;
+    descrip     = "Rewrite source IP addresses using pseudo-NAT";
+    doc         = <<- EOText
+Works just like the --pnat option, but only affects the source IP
+addresses in the IPv4 header.
+EOText;
+};
+
+flag = {
+    name        = dstipmap;
+    value       = D;
+    arg-type    = string;
+    max         = 1;
+    flags-cant  = pnat;
+    descrip     = "Rewrite destination IP addresses using pseudo-NAT";
+    doc         = <<- EOText
+Works just like the --pnat option, but only affects the destination IP
+addresses in the IPv4 header.
+EOText;
+};
+
+
+flag = {
+	ifdef 		= HAVE_CACHEFILE_SUPPORT;
+    name        = endpoints;
+    value       = e;
+    arg-type    = string;
+    max         = 1;
+    flags-must  = cachefile;
+    descrip     = "Rewrite IP addresses to be between two endpoints";
+    doc         = <<- EOText
+Takes a pair of colon delimited IP addresses which will be used to rewrite
+all traffic to appear to be between the two IP's.
+
+Example:
+@example
+--endpoints=172.16.0.1:172.16.0.2
+@end example
+EOText;
+};
+
+flag = {
+	name		= skipbroadcast;
+	value		= b;
+	descrip		= "Skip rewriting broadcast/multicast IP's";
+	doc			= <<- EOText
+By default --seed, --pnat and --endpoints will rewrite 
+broadcast and multicast IP and MAC addresses.	Setting this flag
+will keep broadcast/multicast IP and MAC addresses from being rewritten.
+EOText;
+};
+
+flag = {
+    name        = fixcsum;
+    value       = C;
+    descrip     = "Force recalculation of IP/TCP/UDP checksums";
+    doc         = <<- EOText
+Causes each IP packet to have it's checksums recalcualted and
+fixed.  Automatically enabled for packets modified with @samp{--seed}, 
+@samp{--pnat}, @samp{--endpoints} or @samp{--fixlen}.
+EOText;
+};
+
+flag = {
+    name        = mtu;
+    value       = m;
+    arg-type    = number;
+    max         = 1;
+    arg-range   = "1->MAXPACKET";
+    default     = DEFAULT_MTU;
+    descrip     = "Override default MTU length (1500 bytes)";
+    doc         = <<- EOText
+Override the default 1500 byte MTU size for determining the maximum padding length.
+EOText;
+};
+
+flag = {
+    name        = efcs;
+    value       = E;
+    descrip     = "Remove Ethernet checksums (FCS) from end of frames";
+    doc         = <<- EOText
+Note, this option is pretty dangerous!  We don't actually check to see if a FCS
+actually exists in the frame, we just blindly delete the last two bytes.  Hence,
+you should only use this if you know know that your OS provides the FCS when 
+reading raw packets.
+EOText;
+};
+
+flag = {
+    name        = ttl;
+    descrip     = "Modify the IPv4 TTL";
+    arg-type    = string;
+    doc         = <<- EOText
+Allows you to modify the TTL of all the IPv4 packets.  Specify a number to hard-code
+the value or +/-value to increase or decrease by the value provided (limited to 1-255).    
+
+Examples:
+@example
+--ttl=10
+--ttl=+7
+--ttl=-64
+@end example
+EOText;
+};
+
+flag = {
+    name        = tos;
+    descrip     = "Set the IPv4 TOS/DiffServ/ECN byte";
+    arg-type    = number;
+    arg-range   = "0->255";
+    max         = 1;
+    doc         = <<- EOText
+Allows you to override the TOS (also known as DiffServ/ECN) value in IPv4 packets.    
+EOText;
+};
+
+flag = {
+    name        = fixlen;
+    value       = F;
+    arg-type    = string;
+    descrip     = "Pad or truncate packet data to match header length";
+    max         = 1;
+    doc         = <<- EOText
+Packets may be truncated during capture if the snaplen is smaller then the
+packet.  This option allows you to modify the packet to pad the packet back
+out to the size stored in the IPv4 header or rewrite the IP header total length
+to reflect the stored packet length.
+@table @bullet
+@item
+@var{pad}
+Truncated packets will be padded out so that the packet length matches the 
+IPv4 total length
+@item
+@var{trunc}
+Truncated packets will have their IPv4 total length field rewritten to match
+the actual packet length
+@item
+@var{del}
+Delete the packet
+EOText;
+};
+
+#include plugins/dlt_stub.def
