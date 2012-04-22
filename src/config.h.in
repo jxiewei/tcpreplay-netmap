@@ -51,6 +51,9 @@
 /* Force using libdnet for sending packets */
 #undef FORCE_INJECT_LIBDNET
 
+/* Force using NETMAP for sending packets */
+#undef FORCE_INJECT_NETMAP
+
 /* Force using libpcap's pcap_inject() for sending packets */
 #undef FORCE_INJECT_PCAP_INJECT
 
@@ -193,6 +196,9 @@
 
 /* Define to 1 if you have the <netinet/in.h> header file. */
 #undef HAVE_NETINET_IN_H
+
+/* Do we have NETMAP support? */
+#undef HAVE_NETMAP
 
 /* Define to 1 if you have the <net/route.h> header file. */
 #undef HAVE_NET_ROUTE_H

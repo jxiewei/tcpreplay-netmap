@@ -41,6 +41,11 @@
 #include "txring.h"
 #endif
 
+#ifdef HAVE_NETMAP
+#include <net/netmap.h>
+#include <net/netmap_user.h>
+#endif
+
 #ifdef HAVE_LIBDNET
 /* need to undef these which are pulled in via defines.h, prior to importing dnet.h */
 #undef icmp_id
@@ -65,7 +70,8 @@ enum sendpacket_type_t {
     SP_TYPE_BPF,
     SP_TYPE_PF_PACKET,
     SP_TYPE_TX_RING,
-    SP_TYPE_CHARDEV
+    SP_TYPE_CHARDEV,
+	SP_TYPE_NETMAP
 };
 
 #define SP_CHARDEV_MAJOR 666
@@ -101,6 +107,11 @@ struct sendpacket_s {
     txring_t * tx_ring;
 #endif
 #endif
+#ifdef HAVE_NETMAP
+	struct netmap_if *nifp;
+	int batch_count;
+	int accum;
+#endif
 };
 
 typedef struct sendpacket_s sendpacket_t;
@@ -109,7 +120,7 @@ int sendpacket(sendpacket_t *, const u_char *, size_t, struct pcap_pkthdr *);
 int sendpacket_close(sendpacket_t *);
 char *sendpacket_geterr(sendpacket_t *);
 char *sendpacket_getstat(sendpacket_t *);
-sendpacket_t *sendpacket_open(const char *, char *, tcpr_dir_t);
+sendpacket_t *sendpacket_open(void *options, const char *, char *, tcpr_dir_t);
 struct tcpr_ether_addr *sendpacket_get_hwaddr(sendpacket_t *);
 int sendpacket_get_dlt(sendpacket_t *);
 const char *sendpacket_get_method(sendpacket_t *);

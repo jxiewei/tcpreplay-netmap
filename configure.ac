@@ -287,6 +287,10 @@ AC_ARG_ENABLE(force-pf,
     AC_HELP_STRING([--enable-force-pf], [Force using Linux's PF_PACKET for sending packets]),
     [ AC_DEFINE([FORCE_INJECT_PF], [1], [Force using Linux's PF_PACKET for sending packets])])
 
+AC_ARG_ENABLE(force-netmap,
+    AC_HELP_STRING([--enable-force-netmap], [Force using NETMAP for sending packets]),
+    [ AC_DEFINE([FORCE_INJECT_NETMAP], [1], [Force using NETMAP for sending packets])])
+
 AC_ARG_ENABLE(force-libdnet,
     AC_HELP_STRING([--enable-force-libdnet], [Force using libdnet for sending packets]),
     [ AC_DEFINE([FORCE_INJECT_LIBDNET], [1], [Force using libdnet for sending packets])])
@@ -762,6 +766,7 @@ AC_TRY_COMPILE([
     AC_MSG_RESULT(no)
 ])
 
+
 have_tx_ring=no
 dnl Check for older Linux TX_RING support
 AC_MSG_CHECKING(for TX_RING socket sending support)
@@ -786,7 +791,7 @@ AC_TRY_COMPILE([
 have_bpf=no
 dnl Check for BSD's BPF
 AC_CACHE_CHECK([for BPF device sending support], ac_cv_have_bpf,
-[AC_TRY_RUN([[
+[AC_TRY_RUN([
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -814,7 +819,7 @@ main(int argc, char *argv[]) {
 
     /* else suck, no good */
     exit(-1);
-}]],
+}],
 [
     AC_MSG_RESULT(yes)
     have_bpf=yes
@@ -829,6 +834,43 @@ if test $have_bpf = yes ; then
     AC_DEFINE([HAVE_BPF], [1], 
             [Do we have BPF device support?])
 fi
+
+have_netmap=no
+dnl Check for NETMAP
+AC_CACHE_CHECK([for NETMAP device sending support], ac_cv_have_netmap,
+[AC_TRY_RUN([
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <net/netmap.h>
+#include <net/netmap_user.h>
+#include <unistd.h>
+
+int
+main(int argc, char *argv[])
+{
+	if (!access("/dev/netmap", F_OK))
+		exit(0);
+	exit(-1);
+}],
+[
+    AC_DEFINE([HAVE_NETMAP], [1],
+            [Do we have NETMAP support?])
+    AC_MSG_RESULT(yes)
+    have_netmap=yes
+],
+[AC_MSG_RESULT(no)],
+[AC_MSG_ERROR([cross-compiling,
+  presetting ac_cv_have_netmap=(yes|no) will help])]
+)
+])
+
+#if test $have_netmap = yes ; then
+#    AC_DEFINE([HAVE_NETMAP], [1], 
+#            [Do we have NETMAP device support?])
+#fi
+
 
 dnl ##################################################
 dnl # Check for libdnet, but only if not Cygwin! 
@@ -1264,6 +1306,7 @@ Supported Packet Injection Methods (*):
 Linux TX_RING:              ${have_tx_ring}
 Linux PF_PACKET:            ${have_pf}
 BSD BPF:                    ${have_bpf}
+NETMAP:                     ${have_netmap}
 libdnet:                    ${have_libdnet}
 pcap_inject:                ${have_pcap_inject}
 pcap_sendpacket:            ${have_pcap_sendpacket} **

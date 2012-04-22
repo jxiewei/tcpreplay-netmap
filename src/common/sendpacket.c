@@ -69,6 +69,16 @@
 #include "defines.h"
 #include "common.h"
 #include "sendpacket.h"
+#include "tcpreplay.h"
+
+#ifdef FORCE_INJECT_NETMAP
+#undef HAVE_LIBDNET
+#undef HAVE_PCAP_INJECT
+#undef HAVE_PCAP_SENDPACKET
+#undef HAVE_BPF
+#undef HAVE_TX_RING
+#undef HAVE_PF_PACKET
+#endif
 
 #ifdef FORCE_INJECT_TX_RING
 #undef HAVE_LIBDNET
@@ -121,7 +131,7 @@
 #undef HAVE_PCAP_INJECT /* configure returns true for some odd reason */
 #endif
 
-#if !defined HAVE_PCAP_INJECT && !defined HAVE_PCAP_SENDPACKET && !defined HAVE_LIBDNET && !defined HAVE_PF_PACKET && !defined HAVE_BPF && !defined TX_RING
+#if !defined HAVE_PCAP_INJECT && !defined HAVE_PCAP_SENDPACKET && !defined HAVE_LIBDNET && !defined HAVE_PF_PACKET && !defined HAVE_BPF && !defined TX_RING && !defined HAVE_NETMAP
 #error You need pcap_inject() or pcap_sendpacket() from libpcap, libdnet, Linux's PF_PACKET/TX_RING or *BSD's BPF
 #endif
 
@@ -145,6 +155,7 @@
 #endif
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
 #ifdef HAVE_PF_PACKET
 #undef INJECT_METHOD
@@ -173,10 +184,16 @@ typedef int socklen_t;
 #endif
 
 static sendpacket_t *sendpacket_open_pf(const char *, char *);
-static struct tcpr_ether_addr *sendpacket_get_hwaddr_pf(sendpacket_t *);
 static int get_iface_index(int fd, const int8_t *device, char *);
 
 #endif /* HAVE_PF_PACKET */
+static struct tcpr_ether_addr *sendpacket_get_hwaddr_pf(sendpacket_t *);
+
+#if defined HAVE_NETMAP && ! defined INJECT_METHOD
+#undef INJECT_METHOD
+#define INJECT_METHOD "netmap send()"
+#endif /* HAVE_NETMAP */
+
 
 #if defined HAVE_BPF && ! defined INJECT_METHOD
 #undef INJECT_METHOD
@@ -192,6 +209,7 @@ static sendpacket_t *sendpacket_open_bpf(const char *, char *) _U_;
 static struct tcpr_ether_addr *sendpacket_get_hwaddr_bpf(sendpacket_t *) _U_;
 
 #endif /* HAVE_BPF */
+
 
 #if defined HAVE_LIBDNET && ! defined INJECT_METHOD
 #undef INJECT_METHOD
@@ -225,6 +243,13 @@ static struct tcpr_ether_addr *sendpacket_get_hwaddr_pcap(sendpacket_t *) _U_;
 #define INJECT_METHOD "pcap_sendpacket()"
 #endif
 
+#if defined HAVE_NETMAP
+#undef INJECT_METHOD
+#define INJECT_METHOD "netmap_send_packet"
+static int netmap_send_packet(sendpacket_t *,  char *, int );
+static sendpacket_t * sendpacket_open_netmap(const char *, char *, int );
+#endif
+
 static void sendpacket_seterr(sendpacket_t *sp, const char *fmt, ...);
 static sendpacket_t * sendpacket_open_chardev(const char *, char *) _U_;
 static struct tcpr_ether_addr * sendpacket_get_hwaddr_chardev(sendpacket_t *) _U_;
@@ -252,6 +277,7 @@ sendpacket(sendpacket_t *sp, const u_char *data, size_t len, struct pcap_pkthdr 
     assert(sp);
     assert(data);
 
+	dbgx(1, "sendpacket(%p, %d)", data, len);
     if (len <= 0)
         return -1;
 
@@ -430,6 +456,13 @@ TRY_SEND_AGAIN:
 #endif /* HAVE_PCAP_INJECT || HAVE_PCAP_SENDPACKET */
 
             break;
+		case SP_TYPE_NETMAP:
+#if defined HAVE_NETMAP
+			retcode = netmap_send_packet(sp, data, len);
+			if (retcode == 0)
+				retcode = len;
+#endif
+			break;
 
         default:
             errx(1, "Unsupported sp->handle_type = %d", sp->handle_type);
@@ -454,7 +487,7 @@ TRY_SEND_AGAIN:
  * that this interface represents
  */
 sendpacket_t *
-sendpacket_open(const char *device, char *errbuf, tcpr_dir_t direction)
+sendpacket_open(void *options, const char *device, char *errbuf, tcpr_dir_t direction)
 {
     sendpacket_t *sp;
     struct stat sdata;
@@ -480,6 +513,11 @@ sendpacket_open(const char *device, char *errbuf, tcpr_dir_t direction)
         sp = sendpacket_open_libdnet(device, errbuf);
 #elif (defined HAVE_PCAP_INJECT || defined HAVE_PCAP_SENDPACKET)
         sp = sendpacket_open_pcap(device, errbuf);
+#elif defined HAVE_NETMAP
+		if (options && ((tcpreplay_opt_t *)options)->speed.mode == SPEED_TOPSPEED)
+			sp = sendpacket_open_netmap(device, errbuf, 1);
+		else
+			sp = sendpacket_open_netmap(device, errbuf, 0);
 #else
 #error "No defined packet injection method for sendpacket_open()"
 #endif
@@ -555,6 +593,12 @@ sendpacket_close(sendpacket_t *sp)
         case SP_TYPE_LIBNET:
             err(-1, "Libnet is no longer supported!");
             break;
+		case SP_TYPE_NETMAP:
+#ifdef HAVE_NETMAP
+			ioctl(sp->handle.fd, NIOCUNREGIF, NULL);
+			close(sp->handle.fd);
+#endif
+			break;
     }
     safe_free(sp);
     return 0;
@@ -577,7 +621,7 @@ sendpacket_get_hwaddr(sendpacket_t *sp)
     if (sp->handle_type == SP_TYPE_CHARDEV) {
         addr = sendpacket_get_hwaddr_chardev(sp);
     } else {    
-#if defined HAVE_PF_PACKET
+#if (defined HAVE_PF_PACKET || defined HAVE_NETMAP)
         addr = sendpacket_get_hwaddr_pf(sp);
 #elif defined HAVE_BPF
         addr = sendpacket_get_hwaddr_bpf(sp);
@@ -861,6 +905,10 @@ get_iface_index(int fd, const int8_t *device, char *errbuf) {
     return ifr.ifr_ifindex;
 }
 
+
+#endif /* HAVE_PF_PACKET */
+
+#if (defined HAVE_PF_PACKET || defined HAVE_NETMAP)
 /**
  * get's the hardware address via Linux's PF packet interface
  */
@@ -897,7 +945,7 @@ sendpacket_get_hwaddr_pf(sendpacket_t *sp)
     close(fd);
     return(&sp->ether);
 }
-#endif /* HAVE_PF_PACKET */
+#endif
 
 #if defined HAVE_BPF
 /**
@@ -1129,7 +1177,7 @@ sendpacket_open_chardev(const char *device, char *errbuf)
     assert(device);
     assert(errbuf);
 
-    if ((mysocket = open(device, O_WRONLY|O_EXLOCK)) < 0) {
+    if ((mysocket = open(device, O_WRONLY|O_EXCL)) < 0) {
         snprintf(errbuf, SENDPACKET_ERRBUF_SIZE, "error opening chardev device: %s", strerror(errno));
         return NULL;
     }
@@ -1150,4 +1198,97 @@ sendpacket_get_hwaddr_chardev(sendpacket_t *sp)
     assert(sp);
     sendpacket_seterr(sp, "Error: sendpacket_get_hwaddr() not yet supported for character devices");
     return NULL;
+}
+
+static int
+netmap_send_packet(sendpacket_t *sp,  char *data, int len)
+{
+	int i, fd, err;
+	struct netmap_if *nifp;
+	struct netmap_ring *tx_ring;
+	int cur;
+	struct netmap_slot *slot;
+	char *p;
+
+	dbgx(1, "netmap_send_packet(%p, %d)", data, len);
+	fd = sp->handle.fd;
+	nifp = sp->nifp;
+	for (i = 0; i < nifp->ni_tx_queues; i++) {
+
+		tx_ring = NETMAP_TXRING(nifp, i);
+		if (tx_ring->avail == 0)
+			continue;
+	}
+
+	if (tx_ring->avail == 0) {
+		warn("netmap_send_packet failed, tx rings are full");
+		return -1;
+	}
+
+	cur = tx_ring->cur;
+	slot = &tx_ring->slot[cur];
+	p = NETMAP_BUF(tx_ring, slot->buf_idx);
+	memcpy(p, data, len);
+	slot->len = len;
+	tx_ring->cur = NETMAP_RING_NEXT(tx_ring, cur);
+	tx_ring->avail--;
+	sp->accum++;
+
+	if (sp->accum >= sp->batch_count) {
+		err = ioctl(fd, NIOCTXSYNC, NULL);
+		if (err) {
+			warnx("NIOCTXSYNC failed %s", strerror(errno));
+			return err;
+		}
+		dbg(1, "NIOCTXSYNC successfully");	
+		sp->accum = 0;
+	}
+
+	return 0;
+} 
+
+static sendpacket_t *
+sendpacket_open_netmap(const char *device, char *errbuf, int batch)
+{
+	sendpacket_t *sp;
+	int fd;
+	struct nmreq nmr;
+	struct netmap_if *nifp;
+	char *mmap_addr;
+
+	fd = open("/dev/netmap", O_RDWR);
+	nmr.nr_version = NETMAP_API;
+	nmr.nr_ringid = 0;
+	strncpy(nmr.nr_name, device, sizeof(nmr.nr_name));
+	if ((ioctl(fd, NIOCGINFO, &nmr)) == -1) {
+		snprintf(errbuf, SENDPACKET_ERRBUF_SIZE, "NIOCGINFO failed: %s", strerror(errno));
+		close(fd);
+		return NULL;
+	}
+
+	if (ioctl(fd, NIOCREGIF, &nmr) == -1) {
+		snprintf(errbuf, SENDPACKET_ERRBUF_SIZE, "register interface failed: %s", strerror(errno));
+		close(fd);
+		return NULL;
+	}
+
+	mmap_addr = (struct netmap_d *) mmap(0, nmr.nr_memsize,
+			PROT_WRITE | PROT_READ,
+			MAP_SHARED, fd, 0);
+	nifp = NETMAP_IF(mmap_addr, nmr.nr_offset);
+	
+	sp = safe_malloc(sizeof(sendpacket_t));
+	sp->handle_type = SP_TYPE_NETMAP;
+	sp->handle.fd = fd;
+	sp->nifp = nifp;
+
+	if (batch) {
+		struct netmap_ring *tx_ring = NETMAP_TXRING(nifp, 0);
+		sp->batch_count = tx_ring->avail;
+	}
+	else
+		sp->batch_count = 1;
+	sp->accum = 0;
+
+	return sp;
 }

@@ -578,7 +578,7 @@ post_args(int argc)
     options.intf1_name = safe_strdup(intname);
 
     /* open interfaces for writing */
-    if ((options.intf1 = sendpacket_open(options.intf1_name, ebuf, TCPR_DIR_C2S)) == NULL)
+    if ((options.intf1 = sendpacket_open(&options, options.intf1_name, ebuf, TCPR_DIR_C2S)) == NULL)
         errx(-1, "Can't open %s: %s", options.intf1_name, ebuf);
 
     int1dlt = sendpacket_get_dlt(options.intf1);
@@ -593,7 +593,7 @@ post_args(int argc)
         options.intf2_name = safe_strdup(intname);
 
         /* open interface for writing */
-        if ((options.intf2 = sendpacket_open(options.intf2_name, ebuf, TCPR_DIR_S2C)) == NULL)
+        if ((options.intf2 = sendpacket_open(&options, options.intf2_name, ebuf, TCPR_DIR_S2C)) == NULL)
             errx(-1, "Can't open %s: %s", options.intf2_name, ebuf);
 
         int2dlt = sendpacket_get_dlt(options.intf2);
